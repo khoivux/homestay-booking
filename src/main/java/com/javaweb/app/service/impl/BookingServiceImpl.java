@@ -15,7 +15,9 @@ import com.javaweb.app.utils.MapUtil;
 import jakarta.servlet.http.HttpSession;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -59,7 +61,7 @@ public class BookingServiceImpl implements BookingService {
         bookingDTO.setCustomerEmail(MapUtil.getObject(params, "customerEmail", String.class));
         bookingDTO.setCustomerPhone(MapUtil.getObject(params, "customerPhone", String.class));
         bookingDTO.setHomestay(homestayRepository.getById(Objects.requireNonNull(MapUtil.getObject(params, "homestayId", Long.class))));
-        bookingDTO.setStatus("Đã cọc");
+        bookingDTO.setStatus("Chờ thanh toán");
         bookingDTO.setCheckInDate(DateUtil.strToDate(MapUtil.getObject(params, "checkInDate", String.class)));
         bookingDTO.setCheckOutDate(DateUtil.strToDate(MapUtil.getObject(params, "checkOutDate", String.class)));
         bookingDTO.setBookingTime(LocalDateTime.now());
@@ -70,7 +72,12 @@ public class BookingServiceImpl implements BookingService {
 
         return bookingDTO;
     }
+    @Transactional
     public BookingDTO saveBooking(BookingDTO bookingDTO) {
+        homestayRepository.findByIdWithLock(bookingDTO.getHomestay().getId())
+                .orElseThrow(() -> new RuntimeException("Homestay không tồn tại"));
+        validDateBooking(bookingDTO.getHomestay().getId(), bookingDTO.getCheckInDate(), bookingDTO.getCheckOutDate());
+
         bookingRepository.save(modelMapper.map(bookingDTO, BookingEntity.class));
         return bookingDTO;
     }
@@ -134,5 +141,18 @@ public class BookingServiceImpl implements BookingService {
         BookingEntity bookingEntity = bookingRepository.getById(id);
         bookingEntity.setStatus("Đã hủy");
         bookingRepository.save(bookingEntity);
+    }
+
+    @Scheduled(fixedRate = 60000) 
+    @Transactional
+    public void cancelExpiredBookings() {
+        LocalDateTime expiryTime = LocalDateTime.now().minusMinutes(5);
+        List<BookingEntity> expiredBookings = bookingRepository.findByStatusAndBookingTimeBefore("Chờ thanh toán", expiryTime);
+        
+        for (BookingEntity booking : expiredBookings) {
+            booking.setStatus("Đã hủy");
+            bookingRepository.save(booking);
+            System.out.println("Đã hủy booking ID: " + booking.getId());
+        }
     }
 }
